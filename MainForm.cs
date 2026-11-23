@@ -617,65 +617,31 @@ public sealed class MainForm : Form
         public uint dwFlags;
     }
 
-    void ShowBothSideBySide(string sourcePath, string targetPath)
+    async void ShowBothSideBySide(string sourcePath, string targetPath)
     {
         try
         {
-            string sourceFile = sourcePath;
-            string targetFile = targetPath;
-
-            string sourceFolder = sourceFile;
-            string targetFolder = targetFile;
-
-            if (File.Exists(sourceFile))
-                sourceFolder = Path.GetDirectoryName(sourceFile) ?? sourceFile;
-            else if (Directory.Exists(Path.GetDirectoryName(sourceFile)))
-                sourceFolder = Path.GetDirectoryName(sourceFile) ?? sourceFile;
-            else
+            if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
                 return;
 
-            if (File.Exists(targetFile))
-                targetFolder = Path.GetDirectoryName(targetFile) ?? targetFile;
-            else if (Directory.Exists(Path.GetDirectoryName(targetFile)))
-                targetFolder = Path.GetDirectoryName(targetFile) ?? targetFile;
-            else
+            if (!File.Exists(targetPath) && !Directory.Exists(targetPath))
                 return;
 
-            // Normalize paths
-            string normalizedSource = Path.GetFullPath(sourceFolder).TrimEnd(Path.DirectorySeparatorChar);
-            string normalizedTarget = Path.GetFullPath(targetFolder).TrimEnd(Path.DirectorySeparatorChar);
+            var result = await ExplorerHelper.OpenAndArrangeSideBySideAsync(sourcePath, targetPath, this);
 
-            // Open explorer windows
-            Process.Start(new ProcessStartInfo("explorer.exe", 
-                File.Exists(sourceFile) ? $"/select,\"{sourceFile}\"" : $"\"{normalizedSource}\"") 
-                { UseShellExecute = true });
-
-            System.Threading.Thread.Sleep(500);
-
-            Process.Start(new ProcessStartInfo("explorer.exe",
-                File.Exists(targetFile) ? $"/select,\"{targetFile}\"" : $"\"{normalizedTarget}\"")
-                { UseShellExecute = true });
-
-            // Give windows time to open
-            System.Threading.Thread.Sleep(1200);
-
-            // Find Explorer windows by title (folder path)
-            IntPtr srcHandle = FindExplorerWindow(normalizedSource);
-            IntPtr tgtHandle = FindExplorerWindow(normalizedTarget);
-
-            if (srcHandle != IntPtr.Zero && tgtHandle != IntPtr.Zero && srcHandle != tgtHandle)
+            if (result.success)
             {
-                // Apply side-by-side layout
-                ApplySideBySideLayout(srcHandle, tgtHandle, sourceFile,targetFile);
+                // Runs on UI thread so Windows allows Explorer windows to rise above your app
+                ExplorerHelper.BringExplorersToFront(result.srcRoot, result.tgtRoot);
             }
             else
             {
-                MessageBox.Show("Could not find both Explorer windows. Please arrange windows manually.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "Could not find both Explorer windows. Please arrange windows manually.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
-        catch (Exception ex) 
-        { 
-            MessageBox.Show(this, ex.Message, "Show Both Side-by-Side", MessageBoxButtons.OK, MessageBoxIcon.Error); 
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Show Both Side-by-Side", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -709,19 +675,7 @@ public sealed class MainForm : Form
 
         return IntPtr.Zero;
     }
-    void ApplySideBySideLayout(IntPtr srcHandle, IntPtr tgtHandle, string source, string target)
-    {
-        try
-        {
-            // 1. Select the single file and scroll to it in both Explorer windows
-            Process.Start("explorer.exe", $"/n,/select,\"{source}\"");
-            Process.Start("explorer.exe", $"/n,/select,\"{target}\"");
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Error applying layout: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
+
     //void ApplySideBySideLayout(IntPtr srcHandle, IntPtr tgtHandle,string source,string target)
     //{
     //    try
