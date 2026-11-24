@@ -44,6 +44,22 @@ namespace VideoDuplicateFinder
         [DllImport("user32.dll")]
         private static extern bool BringWindowToTop(IntPtr hWnd);
 
+        public static bool IsExplorerAtPath(Process process, string targetPath)
+        {
+            try
+            {
+                if (process.HasExited) return false;
+                string title = process.MainWindowTitle;
+                if (string.IsNullOrEmpty(title)) return false;
+                return title.IndexOf(targetPath, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       title.EndsWith(Path.GetFileName(targetPath), StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static HashSet<IntPtr> GetVisibleExplorerWindows()
         {
             var handles = new HashSet<IntPtr>();
@@ -155,104 +171,104 @@ namespace VideoDuplicateFinder
 
             return await Task.Run(async () =>
             {
-            string srcDir = NormalizeDir(sourcePath);
-            string tgtDir = NormalizeDir(targetPath);
+                string srcDir = NormalizeDir(sourcePath);
+                string tgtDir = NormalizeDir(targetPath);
 
-            // 1. Check if an Explorer window is ALREADY open to srcDir
-            IntPtr srcRoot = FindExistingExplorerForFolder(srcDir, IntPtr.Zero);
-            bool openedNewSrc = false;
+                // 1. Check if an Explorer window is ALREADY open to srcDir
+                IntPtr srcRoot = FindExistingExplorerForFolder(srcDir, IntPtr.Zero);
+                bool openedNewSrc = false;
 
-            if (srcRoot == IntPtr.Zero)
-            {
-                var before = GetVisibleExplorerWindows();
-                Process.Start(new ProcessStartInfo
+                if (srcRoot == IntPtr.Zero)
                 {
-                    FileName = "explorer.exe",
-                    Arguments = $"/n,/select,\"{sourcePath}\"",
-                    UseShellExecute = true
-                });
-
-                for (int attempt = 0; attempt < 60; attempt++)
-                {
-                    await Task.Delay(25);
-                    var diff = GetVisibleExplorerWindows().Except(before).ToList();
-                    if (diff.Count >= 1)
-                    {
-                        srcRoot = diff[0];
-                        openedNewSrc = true;
-                        break;
-                    }
-                }
-            }
-
-            if (srcRoot == IntPtr.Zero)
-                return (false, IntPtr.Zero, IntPtr.Zero);
-
-            // 2. Check if a DIFFERENT Explorer window is ALREADY open to tgtDir (strictly excluding srcRoot)
-            IntPtr tgtRoot = FindExistingExplorerForFolder(tgtDir, srcRoot);
-            bool openedNewTgt = false;
-            bool navigatedTgt = false;
-
-            if (tgtRoot == IntPtr.Zero)
-            {
-                bool sameFolder = string.Equals(srcDir, tgtDir, StringComparison.OrdinalIgnoreCase);
-                var beforeSecond = GetVisibleExplorerWindows();
-
-                if (sameFolder)
-                {
-                    // Force an independent second window via This PC CLSID so Windows 11 doesn't reuse srcRoot
+                    var before = GetVisibleExplorerWindows();
                     Process.Start(new ProcessStartInfo
                     {
                         FileName = "explorer.exe",
-                        Arguments = "/n,::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+                        Arguments = $"/n,/select,\"{sourcePath}\"",
                         UseShellExecute = true
                     });
-                    navigatedTgt = true;
-                }
-                else
-                {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "explorer.exe",
-                        Arguments = $"/n,/select,\"{targetPath}\"",
-                        UseShellExecute = true
-                    });
-                }
 
-                for (int attempt = 0; attempt < 60; attempt++)
-                {
-                    await Task.Delay(25);
-                    var diff = GetVisibleExplorerWindows().Except(beforeSecond).ToList();
-                    if (diff.Count >= 1)
+                    for (int attempt = 0; attempt < 60; attempt++)
                     {
-                        tgtRoot = diff[0];
-                        openedNewTgt = true;
-                        break;
+                        await Task.Delay(25);
+                        var diff = GetVisibleExplorerWindows().Except(before).ToList();
+                        if (diff.Count >= 1)
+                        {
+                            srcRoot = diff[0];
+                            openedNewSrc = true;
+                            break;
+                        }
                     }
                 }
-            }
 
-            if (tgtRoot == IntPtr.Zero || tgtRoot == srcRoot)
-                return (false, IntPtr.Zero, IntPtr.Zero);
+                if (srcRoot == IntPtr.Zero)
+                    return (false, IntPtr.Zero, IntPtr.Zero);
 
-            // Restore if either reused window was minimized or maximized
-            ShowWindow(srcRoot, SW_RESTORE);
-            ShowWindow(tgtRoot, SW_RESTORE);
+                // 2. Check if a DIFFERENT Explorer window is ALREADY open to tgtDir (strictly excluding srcRoot)
+                IntPtr tgtRoot = FindExistingExplorerForFolder(tgtDir, srcRoot);
+                bool openedNewTgt = false;
+                bool navigatedTgt = false;
 
-            // 3. Position 50/50 side-by-side and update file selection/scroll
-            Type shellType = Type.GetTypeFromProgID("Shell.Application");
-            dynamic shell = Activator.CreateInstance(shellType);
-            dynamic windows = shell.Windows();
-
-            dynamic srcWindow = null;
-            dynamic tgtWindow = null;
-
-            try
-            {
-                for (int i = 0; i < windows.Count; i++)
+                if (tgtRoot == IntPtr.Zero)
                 {
-                    dynamic window = windows.Item(i);
-                    if (window == null) continue;
+                    bool sameFolder = string.Equals(srcDir, tgtDir, StringComparison.OrdinalIgnoreCase);
+                    var beforeSecond = GetVisibleExplorerWindows();
+
+                    if (sameFolder)
+                    {
+                        // Force an independent second window via This PC CLSID so Windows 11 doesn't reuse srcRoot
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = "/n,::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+                            UseShellExecute = true
+                        });
+                        navigatedTgt = true;
+                    }
+                    else
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = $"/n,/select,\"{targetPath}\"",
+                            UseShellExecute = true
+                        });
+                    }
+
+                    for (int attempt = 0; attempt < 60; attempt++)
+                    {
+                        await Task.Delay(25);
+                        var diff = GetVisibleExplorerWindows().Except(beforeSecond).ToList();
+                        if (diff.Count >= 1)
+                        {
+                            tgtRoot = diff[0];
+                            openedNewTgt = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (tgtRoot == IntPtr.Zero || tgtRoot == srcRoot)
+                    return (false, IntPtr.Zero, IntPtr.Zero);
+
+                // Restore if either reused window was minimized or maximized
+                ShowWindow(srcRoot, SW_RESTORE);
+                ShowWindow(tgtRoot, SW_RESTORE);
+
+                // 3. Position 50/50 side-by-side and update file selection/scroll
+                Type shellType = Type.GetTypeFromProgID("Shell.Application");
+                dynamic shell = Activator.CreateInstance(shellType);
+                dynamic windows = shell.Windows();
+
+                dynamic srcWindow = null;
+                dynamic tgtWindow = null;
+
+                try
+                {
+                    for (int i = 0; i < windows.Count; i++)
+                    {
+                        dynamic window = windows.Item(i);
+                        if (window == null) continue;
 
                         IntPtr hwnd = (IntPtr)(long)window.HWND;
                         IntPtr root = GetAncestor(hwnd, GA_ROOT);
@@ -278,6 +294,7 @@ namespace VideoDuplicateFinder
                             Marshal.ReleaseComObject(window);
                         }
                     }
+
                     if (navigatedTgt && tgtWindow != null && Directory.Exists(tgtDir))
                     {
                         tgtWindow.Navigate2(tgtDir);
@@ -287,6 +304,7 @@ namespace VideoDuplicateFinder
                     {
                         await Task.Delay(180);
                     }
+
                     // Always update selection & scroll to the newly requested source/target files
                     ForceScrollToFile(srcWindow, sourcePath);
                     ForceScrollToFile(tgtWindow, targetPath);
@@ -298,9 +316,11 @@ namespace VideoDuplicateFinder
                     Marshal.ReleaseComObject(windows);
                     Marshal.ReleaseComObject(shell);
                 }
+
                 return (true, srcRoot, tgtRoot);
             });
         }
+
         private static void ForceScrollToFile(dynamic window, string fullFilePath)
         {
             if (window == null || string.IsNullOrWhiteSpace(fullFilePath)) return;
@@ -322,10 +342,11 @@ namespace VideoDuplicateFinder
             }
             catch { }
         }
-        /// 
+
+        /// <summary>
         /// Brings both Explorer windows above the application and gives keyboard focus to the source window.
         /// Must be called on the UI thread.
-        /// 
+        /// </summary>
         public static void BringExplorersToFront(IntPtr srcRoot, IntPtr tgtRoot)
         {
             if (srcRoot == IntPtr.Zero || tgtRoot == IntPtr.Zero) return;

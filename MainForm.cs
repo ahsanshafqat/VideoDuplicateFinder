@@ -7,6 +7,8 @@ namespace VideoDuplicateFinder;
 public sealed class MainForm : Form
 {
     const int ThumbW = 176, ThumbH = 99;
+    const string ColSelectSource = "selectSource";
+    const string ColSelectTarget = "selectTarget";
 
     readonly AppSettings _settings = AppSettings.Load();
 
@@ -27,9 +29,19 @@ public sealed class MainForm : Form
     readonly Button _btnPlayTgt = new() { Text = "Play target", AutoSize = true };
     readonly Button _btnDelSrc = new() { Text = "Delete source...", AutoSize = true };
     readonly Button _btnDelTgt = new() { Text = "Delete target...", AutoSize = true };
-    readonly Button _btnCheckAll = new() { Text = "Check all", AutoSize = true };
+    readonly Button _btnSelectSourceAll = new() { Text = "Select source", AutoSize = true };
+    readonly Button _btnSelectTargetAll = new() { Text = "Select target", AutoSize = true };
     readonly Button _btnUncheckAll = new() { Text = "Uncheck all", AutoSize = true };
-    readonly Button _btnMove = new() { Text = "Move checked pairs to Deleted folder...", AutoSize = true };
+    readonly Button _btnHighQuality = new() { Text = "High Quality", AutoSize = true };
+    readonly Button _btnMoveSelected = new() { Text = "Move selected to Deleted folder...", AutoSize = true };
+    readonly Button _btnDeleteSelected = new()
+    {
+        Text = "Delete selected (Recycle Bin)",
+        AutoSize = true,
+        BackColor = Color.Firebrick,
+        ForeColor = Color.White,
+        FlatStyle = FlatStyle.Flat
+    };
     // progress
     readonly ProgressBar _bar = new() { Dock = DockStyle.Fill, Height = 22, Minimum = 0, Maximum = 1, Style = ProgressBarStyle.Continuous };
     readonly Label _lblPhase = new() { AutoSize = true, Text = "Ready. Choose the folders and click \"Scan (dry run)\".", Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
@@ -61,6 +73,7 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         _bold = new Font(Font, FontStyle.Bold);
+        _btnDeleteSelected.FlatAppearance.BorderColor = Color.DarkRed;
 
         BuildUi();
         LoadSettingsToUi();
@@ -71,7 +84,6 @@ public sealed class MainForm : Form
         {
             try { _split.SplitterDistance = (int)(_split.Height * 0.52); } catch { }
 
-            // Load results from last run
             try
             {
                 var lastResults = DuplicatePair.LoadResults();
@@ -119,7 +131,7 @@ public sealed class MainForm : Form
         }
         PathRow(0, "Source folder", _txtSource, "Select the SOURCE folder");
         PathRow(1, "Target folder", _txtTarget, "Select the TARGET folder");
-        PathRow(2, "Deleted folder (matched pairs are moved here)", _txtDelete, "Select the folder that receives duplicate pairs");
+        PathRow(2, "Deleted folder (selected videos are moved here)", _txtDelete, "Select the folder that receives selected duplicate videos");
         PathRow(3, "FFmpeg folder (optional)", _txtFfmpeg, "Select the folder that contains ffmpeg.exe and ffprobe.exe");
         root.Controls.Add(paths, 0, 0);
 
@@ -148,16 +160,17 @@ public sealed class MainForm : Form
         // ---- buttons ----
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(0, 6, 0, 0) };
         _btnScan.Font = _bold;
-        _btnMove.Margin = new Padding(24, 3, 3, 3);
+        _btnMoveSelected.Margin = new Padding(24, 3, 3, 3);
+        _btnDeleteSelected.Margin = new Padding(3, 3, 3, 3);
         _btnShowSrc.Margin = new Padding(24, 3, 3, 3);
         _btnShowBoth.Margin = new Padding(3, 3, 3, 3);
         actions.Controls.AddRange(new Control[]
         {
             _btnScan, _btnCancel,
             _btnShowSrc, _btnShowTgt, _btnShowBoth, _btnPlaySrc, _btnPlayTgt, _btnDelSrc, _btnDelTgt,
-            _btnCheckAll, _btnUncheckAll, _btnMove,
+            _btnSelectSourceAll, _btnSelectTargetAll, _btnUncheckAll, _btnHighQuality, _btnMoveSelected, _btnDeleteSelected,
         });
-        _btnCheckAll.Margin = new Padding(24, 3, 3, 3);
+        _btnSelectSourceAll.Margin = new Padding(24, 3, 3, 3);
         root.Controls.Add(actions, 0, 2);
 
         // ---- progress ----
@@ -209,7 +222,9 @@ public sealed class MainForm : Form
         _grid.EnableHeadersVisualStyles = true;
         _grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
 
-        _grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "move", HeaderText = "Move", Width = 50 });
+        _grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = ColSelectSource, HeaderText = "Select source", Width = 85 });
+        _grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = ColSelectTarget, HeaderText = "Select target", Width = 85 });
+
         DataGridViewTextBoxColumn C(string name, string header, int width, DataGridViewContentAlignment align = DataGridViewContentAlignment.MiddleLeft)
             => new() { Name = name, HeaderText = header, Width = width, ReadOnly = true, SortMode = DataGridViewColumnSortMode.Automatic, DefaultCellStyle = { Alignment = align } };
         var right = DataGridViewContentAlignment.MiddleRight;
@@ -235,7 +250,8 @@ public sealed class MainForm : Form
     {
         _btnScan.Click += async (_, _) => await RunScan();
         _btnCancel.Click += (_, _) => { _opCts?.Cancel(); Log("Cancel requested..."); };
-        _btnMove.Click += async (_, _) => await MoveChecked();
+        _btnMoveSelected.Click += async (_, _) => await MoveSelected();
+        _btnDeleteSelected.Click += (_, _) => DeleteSelected();
 
         _btnShowSrc.Click += (_, _) => { if (CurrentPair() is { } p) ShowInExplorer(p.Source); };
         _btnShowTgt.Click += (_, _) => { if (CurrentPair() is { } p) ShowInExplorer(p.Target); };
@@ -244,8 +260,10 @@ public sealed class MainForm : Form
         _btnPlayTgt.Click += (_, _) => { if (CurrentPair() is { } p) PlayFile(p.Target); };
         _btnDelSrc.Click += (_, _) => { if (CurrentPair() is { } p) DeleteOne(p.Source, p.SourceSize); };
         _btnDelTgt.Click += (_, _) => { if (CurrentPair() is { } p) DeleteOne(p.Target, p.TargetSize); };
-        _btnCheckAll.Click += (_, _) => SetAllChecked(true);
-        _btnUncheckAll.Click += (_, _) => SetAllChecked(false);
+        _btnSelectSourceAll.Click += (_, _) => SetColumnAllChecked(selectSource: true);
+        _btnSelectTargetAll.Click += (_, _) => SetColumnAllChecked(selectSource: false);
+        _btnUncheckAll.Click += (_, _) => ClearAllChecked();
+        _btnHighQuality.Click += (_, _) => ApplyHighQualitySelection();
 
         _numMatch.ValueChanged += (_, _) => { if (_all.Count > 0) Populate(); };
         _chkPossible.CheckedChanged += (_, _) => { _numPossible.Enabled = _chkPossible.Checked; if (_all.Count > 0) Populate(); };
@@ -256,15 +274,37 @@ public sealed class MainForm : Form
         {
             if (_grid.IsCurrentCellDirty) _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
-        _grid.CellValueChanged += (_, e) => { if (e.ColumnIndex == 0 && !_populating) UpdateSummary(); };
-        _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && e.ColumnIndex > 0 && CurrentPair() is { } p) ShowInExplorer(p.Source); };
+        _grid.CellValueChanged += (_, e) =>
+        {
+            if (_populating || e.RowIndex < 0) return;
+
+            string colName = _grid.Columns[e.ColumnIndex].Name;
+            if (colName == ColSelectSource || colName == ColSelectTarget)
+            {
+                _populating = true;
+                try
+                {
+                    var row = _grid.Rows[e.RowIndex];
+                    if (colName == ColSelectSource && row.Cells[ColSelectSource].Value is true)
+                        row.Cells[ColSelectTarget].Value = false;
+                    else if (colName == ColSelectTarget && row.Cells[ColSelectTarget].Value is true)
+                        row.Cells[ColSelectSource].Value = false;
+                }
+                finally
+                {
+                    _populating = false;
+                }
+                UpdateSummary();
+            }
+        };
+        _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && e.ColumnIndex > 1 && CurrentPair() is { } p) ShowInExplorer(p.Source); };
         _grid.CellMouseDown += (_, e) =>
         {
             if (e.Button == MouseButtons.Right && e.RowIndex >= 0)
             {
                 _grid.ClearSelection();
                 _grid.Rows[e.RowIndex].Selected = true;
-                _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[1];
+                _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[2];
             }
         };
 
@@ -283,6 +323,12 @@ public sealed class MainForm : Form
         tip.SetToolTip(_btnScan, "Fingerprints all videos and lists duplicates. Nothing is moved or deleted. Run it again after you delete files - already analysed videos are cached, so it is fast.");
         tip.SetToolTip(_btnDelSrc, "Sends the SOURCE file to the Recycle Bin and removes it from the list.");
         tip.SetToolTip(_btnDelTgt, "Sends the TARGET file to the Recycle Bin and removes it from the list.");
+        tip.SetToolTip(_btnSelectSourceAll, "Checks Select source for all rows and unchecks Select target.");
+        tip.SetToolTip(_btnSelectTargetAll, "Checks Select target for all rows and unchecks Select source.");
+        tip.SetToolTip(_btnUncheckAll, "Unchecks both Select source and Select target across all rows.");
+        tip.SetToolTip(_btnHighQuality, "Selects source or target based on size and resolution (if source size & resolution > target, selects target; if target > source, selects source; if equal, selects target).");
+        tip.SetToolTip(_btnMoveSelected, "Moves the selected source/target video in each checked row to the Deleted folder.");
+        tip.SetToolTip(_btnDeleteSelected, "Sends the selected source/target video in each checked row directly to the Recycle Bin.");
         tip.SetToolTip(_numTol, "How many of the 63 hash bits may differ for two frames to count as the same picture. Higher = more lenient.");
         tip.SetToolTip(_numDur, "Videos are only compared if their lengths are within max(2 seconds, this percentage).");
         tip.SetToolTip(_numMatch, "Share of sampled frames that must have a look-alike in the other video.");
@@ -365,7 +411,6 @@ public sealed class MainForm : Form
             var tools = new FfTools(s.FfmpegFolder);
             var result = await Task.Run(() => new Scanner(tools).Scan(s, progress, log, ct), ct);
             _all = result;
-            // Save results for later retrieval
             DuplicatePair.SaveResults(_all);
             Populate();
             _lblPhase.Text = $"Scan finished in {Scanner.FormatDuration(sw.Elapsed.TotalSeconds)}.";
@@ -408,6 +453,54 @@ public sealed class MainForm : Form
     // =====================================================================
     //  results grid
     // =====================================================================
+    static (bool selectSource, bool selectTarget) GetDefaultSelection(DuplicatePair p)
+    {
+        long srcRes = (long)Math.Max(0, p.SourceWidth) * Math.Max(0, p.SourceHeight);
+        long tgtRes = (long)Math.Max(0, p.TargetWidth) * Math.Max(0, p.TargetHeight);
+
+        bool srcGreater = p.SourceSize > p.TargetSize && srcRes > tgtRes;
+        bool tgtGreater = p.TargetSize > p.SourceSize && tgtRes > srcRes;
+        bool bothEqual = p.SourceSize == p.TargetSize && srcRes == tgtRes;
+
+        if (srcGreater)
+            return (false, true);
+
+        if (tgtGreater)
+            return (true, false);
+
+        if (bothEqual)
+            return (false, true);
+
+        return (false, true);
+    }
+
+    void ApplyHighQualitySelection()
+    {
+        _populating = true;
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is not DuplicatePair p) continue;
+            var (selSrc, selTgt) = GetDefaultSelection(p);
+            r.Cells[ColSelectSource].Value = selSrc;
+            r.Cells[ColSelectTarget].Value = selTgt;
+        }
+        _populating = false;
+        UpdateSummary();
+    }
+
+    void ClearAllChecked()
+    {
+        _populating = true;
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is not DuplicatePair) continue;
+            r.Cells[ColSelectSource].Value = false;
+            r.Cells[ColSelectTarget].Value = false;
+        }
+        _populating = false;
+        UpdateSummary();
+    }
+
     void Populate()
     {
         _populating = true;
@@ -418,7 +511,12 @@ public sealed class MainForm : Form
         {
             bool dup = p.Score >= match;
             if (!dup && !_chkPossible.Checked) continue;
-            int i = _grid.Rows.Add(dup, dup ? "Duplicate" : "Possible", p.Score,
+
+            var (selSrc, selTgt) = GetDefaultSelection(p);
+
+            int i = _grid.Rows.Add(
+                selSrc, selTgt,
+                dup ? "Duplicate" : "Possible", p.Score,
                 Path.GetFileName(p.Source), p.SourceSize, Res(p.SourceWidth, p.SourceHeight),
                 Path.GetFileName(p.Target), p.TargetSize, Res(p.TargetWidth, p.TargetHeight),
                 p.SourceSize - p.TargetSize, p.SourceDuration - p.TargetDuration,
@@ -449,8 +547,13 @@ public sealed class MainForm : Form
                 e.FormattingApplied = true;
                 if (_grid.Rows[e.RowIndex].Tag is DuplicatePair p)
                 {
-                    bool larger = name == "srcSize" ? p.SourceSize > p.TargetSize : p.TargetSize > p.SourceSize;
-                    if (larger) e.CellStyle!.Font = _bold;
+                    bool isSource = name == "srcSize";
+                    bool larger = isSource ? p.SourceSize > p.TargetSize : p.TargetSize > p.SourceSize;
+                    bool smaller = isSource ? p.SourceSize < p.TargetSize : p.TargetSize < p.SourceSize;
+                    if (larger)
+                        e.CellStyle!.Font = _bold;
+                    else if (smaller)
+                        e.CellStyle!.ForeColor = Color.Firebrick;
                 }
                 break;
             case "sizeDiff":
@@ -469,26 +572,32 @@ public sealed class MainForm : Form
 
     DuplicatePair? CurrentPair() => _grid.CurrentRow?.Tag as DuplicatePair;
 
-    void SetAllChecked(bool value)
+    void SetColumnAllChecked(bool selectSource)
     {
         _populating = true;
-        foreach (DataGridViewRow r in _grid.Rows) r.Cells[0].Value = value;
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is not DuplicatePair) continue;
+            r.Cells[ColSelectSource].Value = selectSource;
+            r.Cells[ColSelectTarget].Value = !selectSource;
+        }
         _populating = false;
         UpdateSummary();
     }
 
     void UpdateSummary()
     {
-        int dup = 0, poss = 0, chk = 0;
+        int dup = 0, poss = 0, selSrcCount = 0, selTgtCount = 0;
         foreach (DataGridViewRow r in _grid.Rows)
         {
             if ((string?)r.Cells["status"].Value == "Duplicate") dup++; else poss++;
-            if (r.Cells[0].Value is true) chk++;
+            if (r.Cells[ColSelectSource].Value is true) selSrcCount++;
+            if (r.Cells[ColSelectTarget].Value is true) selTgtCount++;
         }
+        int totalSelected = selSrcCount + selTgtCount;
         _lblSummary.Text = _grid.Rows.Count == 0
             ? "No results yet."
-            : $"{dup} duplicate pair(s), {poss} possible.  {chk} checked for moving.  Larger file of each pair is shown in bold.  " +
-              "Tip: delete files yourself (buttons / right-click / Explorer), then click Scan again - deleted files will no longer be listed.";
+            : $"{dup} duplicate pair(s), {poss} possible.  {totalSelected} video(s) selected ({selSrcCount} source, {selTgtCount} target).  Larger file of each pair is shown in bold.";
         UpdateButtons();
     }
 
@@ -530,27 +639,21 @@ public sealed class MainForm : Form
                 return;
             }
 
-            // Normalize the path for comparison
             string normalizedTarget = Path.GetFullPath(targetFolder).TrimEnd(Path.DirectorySeparatorChar);
 
-            // Try to find an existing explorer window for this folder
             var existingProcess = Process.GetProcessesByName("explorer")
-                .FirstOrDefault(p => IsExplorerAtPath(p, normalizedTarget));
+                .FirstOrDefault(p => ExplorerHelper.IsExplorerAtPath(p, normalizedTarget));
 
             if (existingProcess != null && existingProcess.MainWindowHandle != IntPtr.Zero)
             {
-                // Focus the existing window
-                SetForegroundWindow(existingProcess.MainWindowHandle);
+                ExplorerHelper.SetForegroundWindow(existingProcess.MainWindowHandle);
                 if (selectFile)
                 {
-                    // If we want to select a specific file, we still need to open a new instance
-                    // since we can't reliably send the selection command to an existing window
                     Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
                 }
             }
             else
             {
-                // Open new explorer window
                 if (selectFile)
                     Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
                 else
@@ -558,63 +661,6 @@ public sealed class MainForm : Form
             }
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Explorer", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-    }
-
-    static bool IsExplorerAtPath(Process process, string targetPath)
-    {
-        try
-        {
-            // Look for explorer processes and check environment/command line
-            // This is a heuristic - check if the process is still alive
-            if (process.HasExited) return false;
-
-            // Check the MainWindowTitle which often contains the folder path
-            string title = process.MainWindowTitle;
-            if (string.IsNullOrEmpty(title)) return false;
-
-            // Common heuristic: window titles often end with folder name or contain the path
-            // For better accuracy, you would need to use COM interfaces (IShellWindows)
-            // This simplified version uses the window title
-            return title.IndexOf(targetPath, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   title.EndsWith(Path.GetFileName(targetPath), StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool SetForegroundWindow(IntPtr hWnd);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool SetWindowPlacement(IntPtr hWnd, [System.Runtime.InteropServices.In] ref WINDOWPLACEMENT lpwndpl);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
-
-    struct WINDOWPLACEMENT
-    {
-        public uint length;
-        public uint flags;
-        public uint showCmd;
-        public System.Drawing.Point ptMinPosition;
-        public System.Drawing.Point ptMaxPosition;
-        public System.Drawing.Rectangle rcNormalPosition;
-    }
-
-    struct MONITORINFO
-    {
-        public uint cbSize;
-        public System.Drawing.Rectangle rcMonitor;
-        public System.Drawing.Rectangle rcWork;
-        public uint dwFlags;
     }
 
     async void ShowBothSideBySide(string sourcePath, string targetPath)
@@ -631,7 +677,6 @@ public sealed class MainForm : Form
 
             if (result.success)
             {
-                // Runs on UI thread so Windows allows Explorer windows to rise above your app
                 ExplorerHelper.BringExplorersToFront(result.srcRoot, result.tgtRoot);
             }
             else
@@ -642,104 +687,6 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Show Both Side-by-Side", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
-
-    IntPtr FindExplorerWindow(string folderPath)
-    {
-        // Try to find an Explorer window showing this folder
-        var explorerProcesses = Process.GetProcessesByName("explorer");
-
-        foreach (var proc in explorerProcesses)
-        {
-            try
-            {
-                // Check if window title contains the folder name
-                if (proc.MainWindowHandle != IntPtr.Zero && proc.MainWindowTitle.Contains(Path.GetFileName(folderPath)))
-                {
-                    return proc.MainWindowHandle;
-                }
-            }
-            catch { }
-        }
-
-        // If no match found, get the most recent Explorer window
-        if (explorerProcesses.Length > 0)
-        {
-            var recent = explorerProcesses.OrderByDescending(p => p.StartTime).FirstOrDefault();
-            if (recent != null && recent.MainWindowHandle != IntPtr.Zero)
-            {
-                return recent.MainWindowHandle;
-            }
-        }
-
-        return IntPtr.Zero;
-    }
-
-    static bool IsWindows11()
-    {
-        try
-        {
-            var version = Environment.OSVersion.Version;
-            // Windows 11 is version 10.0.22000 or higher
-            return version.Major == 10 && version.Minor == 0 && version.Build >= 22000;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-    static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
-
-    const uint SWP_NOZORDER = 0x0004;
-    const uint SWP_SHOWWINDOW = 0x0040;
-
-    void ManualSideBySideLayout(IntPtr srcHandle, IntPtr tgtHandle)
-    {
-        try
-        {
-            // Get monitor info
-            IntPtr hMonitor = MonitorFromWindow(srcHandle, 0);
-            var monitorInfo = new MONITORINFO { cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MONITORINFO)) };
-
-            if (GetMonitorInfo(hMonitor, ref monitorInfo))
-            {
-                var workArea = monitorInfo.rcWork;
-                int halfWidth = (workArea.Width - 2) / 2; // -2 for window border
-
-                // Arrange windows side by side
-                var srcPlacement = new WINDOWPLACEMENT 
-                { 
-                    length = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(WINDOWPLACEMENT)),
-                    flags = 0,
-                    showCmd = 1, // SW_SHOWNORMAL
-                    rcNormalPosition = new System.Drawing.Rectangle(workArea.X, workArea.Y, workArea.X + halfWidth, workArea.Y + workArea.Height)
-                };
-
-                var tgtPlacement = new WINDOWPLACEMENT
-                { 
-                    length = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(WINDOWPLACEMENT)),
-                    flags = 0,
-                    showCmd = 1, // SW_SHOWNORMAL
-                    rcNormalPosition = new System.Drawing.Rectangle(workArea.X + halfWidth + 1, workArea.Y, workArea.X + workArea.Width, workArea.Y + workArea.Height)
-                };
-
-                SetWindowPlacement(srcHandle, ref srcPlacement);
-                SetWindowPlacement(tgtHandle, ref tgtPlacement);
-            }
-
-            // Bring source window to front
-            SetForegroundWindow(srcHandle);
-        }
-        catch
-        {
-            // If all else fails, just bring windows to front
-            SetForegroundWindow(srcHandle);
         }
     }
 
@@ -780,19 +727,91 @@ public sealed class MainForm : Form
         }
     }
 
-    async Task MoveChecked()
+    void DeleteSelected()
     {
-        var items = _grid.Rows.Cast<DataGridViewRow>()
-            .Where(r => r.Cells[0].Value is true && r.Tag is DuplicatePair)
-            .Select(r => (DuplicatePair)r.Tag!).ToList();
-        if (items.Count == 0) { MessageBox.Show(this, "No pairs are checked.", "Move", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        var items = new List<(string Role, string FilePath)>();
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is not DuplicatePair p) continue;
+            if (r.Cells[ColSelectSource].Value is true)
+                items.Add(("Source", p.Source));
+            if (r.Cells[ColSelectTarget].Value is true)
+                items.Add(("Target", p.Target));
+        }
+
+        if (items.Count == 0)
+        {
+            MessageBox.Show(this, "No source or target videos are selected.", "Delete selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var answer = MessageBox.Show(this,
+            $"Send {items.Count} selected video(s) to the Recycle Bin?\n\n" +
+            "If a drive has no Recycle Bin, Windows may delete it permanently.",
+            "Delete selected videos", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes) return;
+
+        var deletedFiles = new List<string>();
+        int ok = 0, failed = 0;
+
+        Log($"==== Deleting {items.Count} selected video(s) to Recycle Bin ====");
+        foreach (var item in items)
+        {
+            if (!File.Exists(item.FilePath))
+            {
+                deletedFiles.Add(item.FilePath);
+                continue;
+            }
+
+            try
+            {
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(item.FilePath,
+                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                ok++;
+                deletedFiles.Add(item.FilePath);
+                Log($"DELETED ({item.Role}) {item.FilePath}");
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                Log($"FAILED ({item.Role}) {item.FilePath}: {ex.Message}");
+            }
+        }
+
+        RemoveFiles(deletedFiles);
+        _lblPhase.Text = $"Delete finished: {ok} video(s) sent to Recycle Bin, {failed} failed.";
+        Log(_lblPhase.Text);
+    }
+
+    async Task MoveSelected()
+    {
+        var items = new List<(string Role, string FilePath, DuplicatePair Pair)>();
+        foreach (DataGridViewRow r in _grid.Rows)
+        {
+            if (r.Tag is not DuplicatePair p) continue;
+            if (r.Cells[ColSelectSource].Value is true)
+                items.Add(("Source", p.Source, p));
+            if (r.Cells[ColSelectTarget].Value is true)
+                items.Add(("Target", p.Target, p));
+        }
+
+        if (items.Count == 0)
+        {
+            MessageBox.Show(this, "No source or target videos are selected.", "Move", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
 
         var s = ReadSettings();
-        if (string.IsNullOrWhiteSpace(s.DeleteRoot)) { MessageBox.Show(this, "Choose the Deleted folder first.", "Move", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+        if (string.IsNullOrWhiteSpace(s.DeleteRoot))
+        {
+            MessageBox.Show(this, "Choose the Deleted folder first.", "Move", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         var answer = MessageBox.Show(this,
-            $"Move {items.Count} pair(s) - both the source and the target file of each - into:\n\n{s.DeleteRoot}\n\n" +
-            (s.FolderNamedAfterVideo ? "one sub-folder named after each video." : "numbered sub-folders 1, 2, 3...") + "\n\nContinue?",
-            "Move duplicates", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            $"Move {items.Count} selected video(s) into:\n\n{s.DeleteRoot}\n\nContinue?",
+            "Move selected videos", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (answer != DialogResult.Yes) return;
         s.Save();
 
@@ -804,32 +823,34 @@ public sealed class MainForm : Form
         IProgress<string> log = new Progress<string>(Log);
         var movedFiles = new List<string>();
         int ok = 0, failed = 0;
-        Log($"==== Moving {items.Count} pair(s) to {s.DeleteRoot} ====");
+
+        Log($"==== Moving {items.Count} selected video(s) to {s.DeleteRoot} ====");
         try
         {
             await Task.Run(() =>
             {
                 var sw = Stopwatch.StartNew();
                 int i = 0;
-                foreach (var p in items)
+                foreach (var item in items)
                 {
                     ct.ThrowIfCancellationRequested();
                     var eta = i == 0 ? (TimeSpan?)null : TimeSpan.FromSeconds(sw.Elapsed.TotalSeconds / i * (items.Count - i));
-                    progress.Report(new ScanProgress("Moving duplicate pairs", i, items.Count, Path.GetFileName(p.Source), sw.Elapsed, eta));
-                    if (PairMover.Move(p.Source, p.Target, s.DeleteRoot, s.FolderNamedAfterVideo, out var dest, out var msg))
+                    progress.Report(new ScanProgress("Moving selected videos", i, items.Count, Path.GetFileName(item.FilePath), sw.Elapsed, eta));
+
+                    if (PairMover.Move(item.FilePath, item.FilePath, s.DeleteRoot, s.FolderNamedAfterVideo, out var dest, out var msg))
                     {
                         ok++;
-                        movedFiles.Add(p.Source); movedFiles.Add(p.Target);
-                        log.Report($"MOVED  {Path.GetFileName(p.Source)}  +  {Path.GetFileName(p.Target)}  ->  {dest}");
+                        movedFiles.Add(item.FilePath);
+                        log.Report($"MOVED ({item.Role}) {Path.GetFileName(item.FilePath)} -> {dest}");
                     }
                     else
                     {
                         failed++;
-                        log.Report("FAILED " + msg);
+                        log.Report($"FAILED ({item.Role}) {msg}");
                     }
                     i++;
                 }
-                progress.Report(new ScanProgress("Moving duplicate pairs", items.Count, items.Count, "", sw.Elapsed, TimeSpan.Zero));
+                progress.Report(new ScanProgress("Moving selected videos", items.Count, items.Count, "", sw.Elapsed, TimeSpan.Zero));
             }, ct);
         }
         catch (OperationCanceledException) { Log("Move cancelled."); }
@@ -837,7 +858,7 @@ public sealed class MainForm : Form
         finally
         {
             RemoveFiles(movedFiles);
-            _lblPhase.Text = $"Move finished: {ok} pair(s) moved and verified, {failed} failed.";
+            _lblPhase.Text = $"Move finished: {ok} video(s) moved, {failed} failed.";
             Log(_lblPhase.Text);
             SetBusy(false);
         }
@@ -866,7 +887,7 @@ public sealed class MainForm : Form
         var ct = cts.Token;
         try
         {
-            await Task.Delay(200, ct);   // don't load while the user is scrolling through rows
+            await Task.Delay(200, ct);
             var tools = new FfTools(_txtFfmpeg.Text.Trim());
             var tSrc = Task.Run(() => tools.Thumbnails(pair.Source, pair.SourceDuration, Scanner.SamplePoints, ThumbW * 2, ct), ct);
             var tTgt = Task.Run(() => tools.Thumbnails(pair.Target, pair.TargetDuration, Scanner.SamplePoints, ThumbW * 2, ct), ct);
@@ -950,8 +971,8 @@ public sealed class MainForm : Form
         _btnCancel.Enabled = _busy;
         foreach (var b in new[] { _btnShowSrc, _btnShowTgt, _btnShowBoth, _btnPlaySrc, _btnPlayTgt, _btnDelSrc, _btnDelTgt })
             b.Enabled = hasRow && !_busy;
-        _btnCheckAll.Enabled = _btnUncheckAll.Enabled = _grid.Rows.Count > 0 && !_busy;
-        _btnMove.Enabled = _grid.Rows.Count > 0 && !_busy;
+        _btnSelectSourceAll.Enabled = _btnSelectTargetAll.Enabled = _btnUncheckAll.Enabled = _btnHighQuality.Enabled = _grid.Rows.Count > 0 && !_busy;
+        _btnMoveSelected.Enabled = _btnDeleteSelected.Enabled = _grid.Rows.Count > 0 && !_busy;
     }
 
     void Log(string msg)

@@ -16,9 +16,9 @@ namespace VideoDuplicateFinder;
 /// <summary>Settings saved to %AppData%\VideoDuplicateFinder\settings.json</summary>
 public sealed class AppSettings
 {
-    public string SourceFolder { get; set; } = @"G:\xxx\Nees Sort out";
-    public string TargetFolder { get; set; } = @"X:\torrent\Torrent Completed\Sort out\New folder";
-    public string DeleteRoot { get; set; } = @"X:\torrent\Torrent Completed\deleted";
+    public string SourceFolder { get; set; } = @"c:\Source";
+    public string TargetFolder { get; set; } = @"c:\Target";
+    public string DeleteRoot { get; set; } = @"c:\delete";
     public string FfmpegFolder { get; set; } = "";          // empty = next to the app, or on PATH
 
     public int MatchScorePercent { get; set; } = 70;         // >= this = "Duplicate"
